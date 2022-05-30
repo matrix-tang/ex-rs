@@ -1,5 +1,7 @@
 pub mod database;
 
+pub use database::*;
+
 use sqlx::MySqlPool;
 use sqlx::mysql::MySqlPoolOptions;
 use crate::conf::config::Conf;

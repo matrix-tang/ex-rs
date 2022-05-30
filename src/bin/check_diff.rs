@@ -1,35 +1,36 @@
 #[macro_use]
 extern crate tokio;
 
-use std::collections::HashMap;
+use std::str::FromStr;
 use binance::api::*;
 use binance::userstream::*;
 use binance::websockets::*;
 use binance::ws_model::{CombinedStreamEvent, WebsocketEvent, WebsocketEventUntag};
 use futures::future::BoxFuture;
 use futures::stream::StreamExt;
-use serde_json::from_str;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use binance::general::General;
+use chrono::Local;
+use dashmap::DashMap;
 use rust_decimal::Decimal;
+use serde_json::from_str;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Clone, Debug, Default)]
-pub struct CheckDiffInfo {
-    pub usdt: Option<Decimal>,
-    pub busd: Option<Decimal>,
-    pub usdc: Option<Decimal>
+pub struct PriceInfo {
+    pub price: Decimal,
+    pub updated: u64,
 }
 
-pub type CheckDiff = HashMap<String, CheckDiffInfo>;
+pub type Symbols = DashMap<String, PriceInfo>;
 
 #[tokio::main]
 async fn main() {
-    let client: General = Binance::new(None, None);
+    /*let client: General = Binance::new(None, None);
     let exchange_info = client.exchange_info().await;
-    let mut cd = CheckDiff::new();
+    let cd = CheckDiff::new();
     for symbol in exchange_info.unwrap().symbols {
         if symbol.quote_asset == "USDT" || symbol.quote_asset == "USDC" || symbol.quote_asset == "BUSD" {
             println!("symbol: {:?}, baseAsset: {:?}, quoteAsset: {:?}", symbol.symbol, symbol.base_asset, symbol.quote_asset);
@@ -42,12 +43,20 @@ async fn main() {
         }
     }
 
+    println!("{:#?}", cd);*/
+
+    let symbols = Symbols::new();
+
     let (logger_tx, mut logger_rx) = tokio::sync::mpsc::unbounded_channel::<WebsocketEvent>();
     let (close_tx, mut close_rx) = tokio::sync::mpsc::unbounded_channel::<bool>();
     let wait_loop = tokio::spawn(async move {
         'hello: loop {
             select! {
-                event = logger_rx.recv() => println!("{:?}", event),
+                event = logger_rx.recv() => {
+                    if let Some(WebsocketEvent::DayTicker(tick_event)) = event {
+                        println!("{:?}", tick_event)
+                    }
+                },
                 _ = close_rx.recv() => break 'hello
             }
         }
@@ -60,7 +69,7 @@ async fn main() {
         // Box::pin(market_websocket(logger_tx.clone())),
         // Box::pin(kline_websocket(logger_tx.clone())),
         // Box::pin(all_trades_websocket(logger_tx.clone())),
-        Box::pin(last_price(logger_tx.clone())),
+        Box::pin(last_price(symbols.clone(),logger_tx.clone())),
         // Box::pin(book_ticker(logger_tx.clone())),
         // Box::pin(combined_orderbook(logger_tx.clone())),
         // Box::pin(custom_event_loop(logger_tx)),
@@ -123,7 +132,7 @@ async fn user_stream_websocket() {
             Ok(())
         });
 
-        web_socket.connect(&listen_key).await.unwrap(); // check error
+        web_socket.connect(&listen_key).await.unwrap(); // check_diff error
         if let Err(e) = web_socket.event_loop(&keep_running).await {
             println!("Error: {}", e);
         }
@@ -157,7 +166,7 @@ async fn market_websocket(logger_tx: UnboundedSender<WebsocketEvent>) {
         Ok(())
     });
 
-    web_socket.connect(&agg_trade).await.unwrap(); // check error
+    web_socket.connect(&agg_trade).await.unwrap(); // check_diff error
     if let Err(e) = web_socket.event_loop(&keep_running).await {
         println!("Error: {}", e);
     }
@@ -185,7 +194,7 @@ async fn all_trades_websocket(logger_tx: UnboundedSender<WebsocketEvent>) {
         Ok(())
     });
 
-    web_socket.connect(agg_trade).await.unwrap(); // check error
+    web_socket.connect(agg_trade).await.unwrap(); // check_diff error
     if let Err(e) = web_socket.event_loop(&keep_running).await {
         println!("Error: {}", e);
     }
@@ -209,7 +218,7 @@ async fn kline_websocket(logger_tx: UnboundedSender<WebsocketEvent>) {
         Ok(())
     });
 
-    web_socket.connect(&kline).await.unwrap(); // check error
+    web_socket.connect(&kline).await.unwrap(); // check_diff error
     if let Err(e) = web_socket.event_loop(&keep_running).await {
         println!("Error: {}", e);
     }
@@ -218,19 +227,29 @@ async fn kline_websocket(logger_tx: UnboundedSender<WebsocketEvent>) {
 }
 
 #[allow(dead_code)]
-async fn last_price(logger_tx: UnboundedSender<WebsocketEvent>) {
+async fn last_price(symbols: Symbols, logger_tx: UnboundedSender<WebsocketEvent>) {
     let keep_running = AtomicBool::new(true);
     let all_ticker = all_ticker_stream();
     let btcusdt: RwLock<f32> = RwLock::new("0".parse().unwrap());
 
     let mut web_socket: WebSockets<'_, Vec<WebsocketEvent>> = WebSockets::new(|events: Vec<WebsocketEvent>| {
         for tick_events in events {
-            // logger_tx.send(tick_events.clone()).unwrap();
+            logger_tx.send(tick_events.clone()).unwrap();
             if let WebsocketEvent::DayTicker(tick_event) = tick_events {
-                if tick_event.symbol.find("DOT") != None {
+                // println!("-------------{:?}", symbols);
+
+                symbols.insert(tick_event.symbol.clone(), PriceInfo {
+                    price: Decimal::from_str(tick_event.current_close.as_str()).unwrap(),
+                    updated: tick_event.event_time
+                });
+
+                /*let result = symbols.get(&tick_event.symbol).unwrap();
+                println!("{:?} {:?} {:?} {:?} {:?}", &tick_event.symbol, result.price, result.updated, Local::now().timestamp_millis(), symbols.len());*/
+
+                /*if tick_event.symbol.find("DOT") != None {
                    println!("{:?}, {:?}", tick_event.symbol, tick_event.symbol.find("DOT"));
-                }
-                if tick_event.symbol == "BTCUSDT" {
+                }*/
+               /* if tick_event.symbol == "BTCUSDT" {
                     let mut btcusdt = btcusdt.write().unwrap();
                     *btcusdt = tick_event.average_price.parse::<f32>().unwrap();
                     let btcusdt_close: f32 = tick_event.current_close.parse().unwrap();
@@ -240,14 +259,14 @@ async fn last_price(logger_tx: UnboundedSender<WebsocketEvent>) {
                         // Break the event loop
                         keep_running.store(false, Ordering::Relaxed);
                     }
-                }
+                }*/
             }
         }
 
         Ok(())
     });
 
-    web_socket.connect(all_ticker).await.unwrap(); // check error
+    web_socket.connect(all_ticker).await.unwrap(); // check_diff error
     if let Err(e) = web_socket.event_loop(&keep_running).await {
         println!("Error: {}", e);
     }
@@ -270,7 +289,7 @@ async fn book_ticker(logger_tx: UnboundedSender<WebsocketEvent>) {
         Ok(())
     });
 
-    web_socket.connect(&book_ticker).await.unwrap(); // check error
+    web_socket.connect(&book_ticker).await.unwrap(); // check_diff error
     if let Err(e) = web_socket.event_loop(&keep_running).await {
         println!("Error: {}", e);
     }
@@ -297,7 +316,7 @@ async fn combined_orderbook(logger_tx: UnboundedSender<WebsocketEvent>) {
             Ok(())
         });
 
-    web_socket.connect_multiple(streams).await.unwrap(); // check error
+    web_socket.connect_multiple(streams).await.unwrap(); // check_diff error
     if let Err(e) = web_socket.event_loop(&keep_running).await {
         println!("Error: {}", e);
     }
@@ -322,7 +341,7 @@ async fn custom_event_loop(logger_tx: UnboundedSender<WebsocketEvent>) {
             }
             Ok(())
         });
-    web_socket.connect_multiple(streams).await.unwrap(); // check error
+    web_socket.connect_multiple(streams).await.unwrap(); // check_diff error
     loop {
         if let Some((ref mut socket, _)) = web_socket.socket {
             if let Ok(message) = socket.next().await.unwrap() {

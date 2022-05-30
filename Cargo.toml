@@ -22,4 +22,7 @@ tokio = { version = "1.14", features = ["full"] }
 binance-rs-async = "1.1.7"
 rust_decimal = "1.18.0"
 redis = { version = "0.21.5", features = ["tokio-comp"] }
-sqlx = { version = "0.5", features = [ "runtime-tokio-rustls",  "mysql", "decimal" ] }
+sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "mysql", "decimal"] }
+dashmap = "5.3.3"
+tracing = "0.1"
+tracing-subscriber = "0.3"
