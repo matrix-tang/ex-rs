@@ -25,3 +25,6 @@ pub const TIME_IN_FORECE_FOK: &str = "FOK";
 // order side
 pub const ORDER_SIDE_BUY: &str = "buy";
 pub const ORDER_SIDE_SELL: &str = "sell";
+
+// my ex prefix
+pub const EX_PREFIX: &str = "EX_";

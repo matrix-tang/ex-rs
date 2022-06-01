@@ -6,6 +6,11 @@ use std::io::prelude::*;
 use once_cell::sync::Lazy;
 
 #[derive(Debug, Deserialize)]
+pub struct SledConfig {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct IpConfig {
     pub name: String,
     pub ip: String,
@@ -32,6 +37,7 @@ pub struct BinanceApiConfig {
 pub struct Conf {
     pub redis: RedisConfig,
     pub mysql: MysqlConfig,
+    pub sled: SledConfig,
     pub ip_config: Vec<IpConfig>,
     pub binance_api_config: BinanceApiConfig,
 }

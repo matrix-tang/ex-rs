@@ -28,22 +28,22 @@ pub type Symbols = DashMap<String, PriceInfo>;
 
 #[tokio::main]
 async fn main() {
-    /*let client: General = Binance::new(None, None);
+    let client: General = Binance::new(None, None);
     let exchange_info = client.exchange_info().await;
-    let cd = CheckDiff::new();
+    // let cd = CheckDiff::new();
     for symbol in exchange_info.unwrap().symbols {
         if symbol.quote_asset == "USDT" || symbol.quote_asset == "USDC" || symbol.quote_asset == "BUSD" {
             println!("symbol: {:?}, baseAsset: {:?}, quoteAsset: {:?}", symbol.symbol, symbol.base_asset, symbol.quote_asset);
-            cd.insert(symbol.base_asset, CheckDiffInfo {
+            /*cd.insert(symbol.base_asset, CheckDiffInfo {
                 usdt: None,
                 busd: None,
-                usdc: None
-            });
+                usdc: None,
+            });*/
             // println!("{:?}", cd);
         }
     }
 
-    println!("{:#?}", cd);*/
+    // println!("{:#?}", cd);
 
     let symbols = Symbols::new();
 
@@ -69,7 +69,7 @@ async fn main() {
         // Box::pin(market_websocket(logger_tx.clone())),
         // Box::pin(kline_websocket(logger_tx.clone())),
         // Box::pin(all_trades_websocket(logger_tx.clone())),
-        Box::pin(last_price(symbols.clone(),logger_tx.clone())),
+        Box::pin(last_price(symbols.clone(), logger_tx.clone())),
         // Box::pin(book_ticker(logger_tx.clone())),
         // Box::pin(combined_orderbook(logger_tx.clone())),
         // Box::pin(custom_event_loop(logger_tx)),
@@ -240,7 +240,7 @@ async fn last_price(symbols: Symbols, logger_tx: UnboundedSender<WebsocketEvent>
 
                 symbols.insert(tick_event.symbol.clone(), PriceInfo {
                     price: Decimal::from_str(tick_event.current_close.as_str()).unwrap(),
-                    updated: tick_event.event_time
+                    updated: tick_event.event_time,
                 });
 
                 /*let result = symbols.get(&tick_event.symbol).unwrap();
@@ -249,17 +249,17 @@ async fn last_price(symbols: Symbols, logger_tx: UnboundedSender<WebsocketEvent>
                 /*if tick_event.symbol.find("DOT") != None {
                    println!("{:?}, {:?}", tick_event.symbol, tick_event.symbol.find("DOT"));
                 }*/
-               /* if tick_event.symbol == "BTCUSDT" {
-                    let mut btcusdt = btcusdt.write().unwrap();
-                    *btcusdt = tick_event.average_price.parse::<f32>().unwrap();
-                    let btcusdt_close: f32 = tick_event.current_close.parse().unwrap();
-                    println!("{} - {}", btcusdt, btcusdt_close);
+                /* if tick_event.symbol == "BTCUSDT" {
+                     let mut btcusdt = btcusdt.write().unwrap();
+                     *btcusdt = tick_event.average_price.parse::<f32>().unwrap();
+                     let btcusdt_close: f32 = tick_event.current_close.parse().unwrap();
+                     println!("{} - {}", btcusdt, btcusdt_close);
 
-                    if btcusdt_close as i32 == 7000 {
-                        // Break the event loop
-                        keep_running.store(false, Ordering::Relaxed);
-                    }
-                }*/
+                     if btcusdt_close as i32 == 7000 {
+                         // Break the event loop
+                         keep_running.store(false, Ordering::Relaxed);
+                     }
+                 }*/
             }
         }
 
