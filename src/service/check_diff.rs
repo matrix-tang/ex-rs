@@ -43,6 +43,7 @@ impl CheckDiff {
             let sled_db = sled.clone();
 
             tokio::spawn(async move {
+                let mut redis = get_redis_connection().await.unwrap();
                 loop {
                     select! {
                         event = rx.recv() => {
@@ -52,7 +53,12 @@ impl CheckDiff {
                                     if let Some(iv) = symbol {
                                         if let Ok(t) = serde_json::from_slice(iv.as_ref()) {
                                             let info: PriceInfo = t;
-                                            info!("{:?}, {:?}", tick_event.symbol, info);
+                                            let key = format!("{}{}", conf::vars::EX_PREFIX, &info.base_asset);
+                                            let r: RedisResult<HashMap<String, String>> = redis.hgetall(key).await;
+                                            let _ = r.map(|x| {
+                                                // println!("xxxxxxxxx: {:?}", x.into_keys());
+                                                info!("{:?}, {:?}, {:?}", tick_event.symbol, info, x.into_keys());
+                                            });
                                         }
                                     }
                                 }
@@ -86,7 +92,7 @@ impl CheckDiff {
         tokio::spawn(async move {
             loop {
                 select! {
-                    _oks = tokio::time::sleep(tokio::time::Duration::from_secs(60)) => {
+                    _oks = tokio::time::sleep(tokio::time::Duration::from_secs(300)) => {
                         if let Ok(exchange_info) = client.exchange_info().await {
                             for symbol in exchange_info.symbols {
                                 let key = format!("{}{}", conf::vars::EX_PREFIX, &symbol.base_asset);
@@ -129,7 +135,7 @@ impl CheckDiff {
         tokio::spawn(async move {
             loop {
                 select! {
-                    _oks = tokio::time::sleep(tokio::time::Duration::from_secs(60)) => {
+                    _oks = tokio::time::sleep(tokio::time::Duration::from_secs(300)) => {
                         if let Ok(exchange_info) = client.exchange_info().await {
                             for symbol in exchange_info.symbols {
                                 if let Ok(_symbol) = sled_db.get(&symbol.symbol) {
