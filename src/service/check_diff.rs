@@ -11,10 +11,9 @@ use binance::general::General;
 use binance::websockets::*;
 use redis::{AsyncCommands, RedisResult};
 use tracing::{error, info, warn};
-use crate::conf;
+use crate::{conf, db};
 use serde::{Deserialize, Serialize};
-use sled::{Db, IVec};
-use crate::db::get_redis_connection;
+use sled::IVec;
 
 const THREADS: i64 = 10;
 
@@ -34,16 +33,16 @@ pub struct CheckDiff {
 }
 
 impl CheckDiff {
-    pub fn new(sled: &Db) -> Self {
+    pub fn new() -> Self {
         let mut txs = HashMap::new();
         for i in 0..THREADS {
             let (tx, mut rx) = mpsc::unbounded_channel::<WebsocketEvent>();
             txs.insert(i, tx.clone());
 
-            let sled_db = sled.clone();
+            let sled_db = db::get_async_sled_db().unwrap();
 
             tokio::spawn(async move {
-                let mut redis = get_redis_connection().await.unwrap();
+                let mut redis = db::get_redis_connection().await.unwrap();
                 loop {
                     select! {
                         event = rx.recv() => {
@@ -77,7 +76,7 @@ impl CheckDiff {
     #[allow(dead_code)]
     pub async fn init_coin_symbols(&self) -> anyhow::Result<()> {
         let client: General = Binance::new(None, None);
-        let mut redis = get_redis_connection().await?;
+        let mut redis = db::get_redis_connection().await?;
         if let Ok(exchange_info) = client.exchange_info().await {
             for symbol in exchange_info.symbols {
                 let key = format!("{}{}", conf::vars::EX_PREFIX, &symbol.base_asset);
@@ -116,8 +115,9 @@ impl CheckDiff {
     }
 
     #[allow(dead_code)]
-    pub async fn init_symbols(&self, sled: &Db) -> anyhow::Result<()> {
+    pub async fn init_symbols(&self) -> anyhow::Result<()> {
         let client: General = Binance::new(None, None);
+        let sled_db = db::get_async_sled_db().unwrap();
         if let Ok(exchange_info) = client.exchange_info().await {
             for symbol in exchange_info.symbols {
                 let s = serde_json::to_string(&PriceInfo {
@@ -126,11 +126,9 @@ impl CheckDiff {
                     price: Decimal::ZERO,
                     updated: 0,
                 })?;
-                sled.insert(&symbol.symbol, IVec::from(s.as_str()))?;
+                sled_db.insert(&symbol.symbol, IVec::from(s.as_str()))?;
             }
         }
-
-        let sled_db = sled.clone();
 
         tokio::spawn(async move {
             loop {
@@ -167,58 +165,65 @@ impl CheckDiff {
         Ok(())
     }
 
-    pub async fn last_price(&self, sled: &Db) -> anyhow::Result<()> {
+    pub async fn last_price(&self) -> anyhow::Result<()> {
         let txs = self.senders.clone();
-        let keep_running = AtomicBool::new(true);
-        let all_ticker = all_ticker_stream();
 
-        let mut web_socket: WebSockets<'_, Vec<WebsocketEvent>> = WebSockets::new(|events: Vec<WebsocketEvent>| {
-            for tick_events in events {
-                if let WebsocketEvent::DayTicker(tick_event) = tick_events.clone() {
-                    // println!("{:?}", tick_event.clone());
-                    let sharding = &tick_event.last_trade_id % THREADS;
-                    if let Some(tx) = txs.get(&sharding) {
-                        if let Err(e) = tx.send(tick_events.clone()) {
-                            error!("{:?}", e);
-                            break;
+        tokio::spawn(async move {
+            let keep_running = AtomicBool::new(true);
+            let all_ticker = all_ticker_stream();
+
+            let sled = db::get_async_sled_db().unwrap();
+
+            let mut web_socket: WebSockets<'_, Vec<WebsocketEvent>> = WebSockets::new(|events: Vec<WebsocketEvent>| {
+                for tick_events in events {
+                    if let WebsocketEvent::DayTicker(tick_event) = tick_events.clone() {
+                        // println!("{:?}", tick_event.clone());
+                        let sharding = &tick_event.last_trade_id % THREADS;
+                        if let Some(tx) = txs.get(&sharding) {
+                            if let Err(e) = tx.send(tick_events.clone()) {
+                                error!("{:?}", e);
+                                break;
+                            }
                         }
-                    }
 
-                    if let Ok(symbol) = sled.get(&tick_event.symbol) {
-                        if let Some(iv) = symbol {
-                            if let Ok(t) = serde_json::from_slice(iv.as_ref()) {
-                                let info: PriceInfo = t;
-                                match serde_json::to_string(&PriceInfo {
-                                    base_asset: info.base_asset,
-                                    quote_asset: info.quote_asset,
-                                    price: Decimal::from_str(tick_event.current_close.as_str()).unwrap(),
-                                    updated: tick_event.event_time,
-                                }) {
-                                    Ok(s) => {
-                                        if let Err(e) = sled.insert(tick_event.symbol, IVec::from(s.as_str())) {
-                                            error!("last price insert symbols error: {:?}", e);
+                        if let Ok(symbol) = sled.get(&tick_event.symbol) {
+                            if let Some(iv) = symbol {
+                                if let Ok(t) = serde_json::from_slice(iv.as_ref()) {
+                                    let info: PriceInfo = t;
+                                    match serde_json::to_string(&PriceInfo {
+                                        base_asset: info.base_asset,
+                                        quote_asset: info.quote_asset,
+                                        price: Decimal::from_str(tick_event.current_close.as_str()).unwrap(),
+                                        updated: tick_event.event_time,
+                                    }) {
+                                        Ok(s) => {
+                                            if let Err(e) = sled.insert(tick_event.symbol, IVec::from(s.as_str())) {
+                                                error!("last price insert symbols error: {:?}", e);
+                                            }
                                         }
-                                    }
-                                    Err(e) => {
-                                        error!("serde json error: {:?}", e);
+                                        Err(e) => {
+                                            error!("serde json error: {:?}", e);
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+
+                Ok(())
+            });
+
+            web_socket.connect(all_ticker).await.unwrap(); // check_diff error
+            if let Err(e) = web_socket.event_loop(&keep_running).await {
+                error!("Error: {:?}", e);
+                return Err(anyhow!(e));
             }
+            web_socket.disconnect().await.unwrap();
+            warn!("disconnected");
 
             Ok(())
         });
-
-        web_socket.connect(all_ticker).await.unwrap(); // check_diff error
-        if let Err(e) = web_socket.event_loop(&keep_running).await {
-            error!("Error: {:?}", e);
-            return Err(anyhow!(e));
-        }
-        web_socket.disconnect().await.unwrap();
-        warn!("disconnected");
 
         Ok(())
     }
