@@ -1,12 +1,17 @@
 use tokio::select;
-use tracing::info;
+use tracing::{info, Level, warn};
 use ex_rs::db;
 use ex_rs::service::check_diff;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
-    info!("check diff ...");
+    tracing_subscriber::fmt()
+        // all spans/events with a level higher than TRACE (e.g, info, warn, etc.)
+        // will be written to stdout.
+        .with_max_level(Level::INFO)
+        // sets this to be the default, global collector for this application.
+        .init();
+    warn!("check diff ...");
 
     let (close_tx, mut close_rx) = tokio::sync::mpsc::unbounded_channel::<bool>();
     let wait_loop = tokio::spawn(async move {
