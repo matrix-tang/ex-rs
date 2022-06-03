@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
-use anyhow::anyhow;
 use binance::ws_model::WebsocketEvent;
 use rust_decimal::Decimal;
 use tokio::select;
@@ -39,10 +38,9 @@ impl CheckDiff {
             let (tx, mut rx) = mpsc::unbounded_channel::<WebsocketEvent>();
             txs.insert(i, tx.clone());
 
-            let sled_db = db::get_async_sled_db().unwrap();
-
             tokio::spawn(async move {
                 let mut redis = db::get_redis_connection().await.unwrap();
+                let sled_db = db::get_async_sled_db().unwrap();
                 loop {
                     select! {
                         event = rx.recv() => {
@@ -81,10 +79,6 @@ impl CheckDiff {
             for symbol in exchange_info.symbols {
                 let key = format!("{}{}", conf::vars::EX_PREFIX, &symbol.base_asset);
                 let _: RedisResult<bool> = redis.hset(&key, &symbol.symbol, "1".to_string()).await;
-                /*let r: RedisResult<HashMap<String, String>> = redis.hgetall(key).await;
-                r.map(|x| {
-                    println!("xxxxxxxxx: {:?}", x.into_keys());
-                });*/
             }
         }
 
@@ -95,14 +89,12 @@ impl CheckDiff {
                         if let Ok(exchange_info) = client.exchange_info().await {
                             for symbol in exchange_info.symbols {
                                 let key = format!("{}{}", conf::vars::EX_PREFIX, &symbol.base_asset);
-                                // println!("---------------------{:?}", key);
                                 let result: RedisResult<bool> = redis.hget(&key, &symbol.symbol).await;
                                 if let Ok(ex) = result {
                                     if ex {
                                         continue;
                                     }
                                 }
-
                                 let _: RedisResult<bool> = redis.hset(&key, &symbol.symbol, "1".to_string()).await;
                             }
                         }
@@ -165,7 +157,7 @@ impl CheckDiff {
         Ok(())
     }
 
-    pub async fn last_price(&self) -> anyhow::Result<()> {
+    pub async fn last_price(&self, close_tx: UnboundedSender<bool>) -> anyhow::Result<()> {
         let txs = self.senders.clone();
 
         tokio::spawn(async move {
@@ -181,7 +173,7 @@ impl CheckDiff {
                         let sharding = &tick_event.last_trade_id % THREADS;
                         if let Some(tx) = txs.get(&sharding) {
                             if let Err(e) = tx.send(tick_events.clone()) {
-                                error!("{:?}", e);
+                                error!("send tick events to channel error: {:?}", e);
                                 break;
                             }
                         }
@@ -214,15 +206,18 @@ impl CheckDiff {
                 Ok(())
             });
 
-            web_socket.connect(all_ticker).await.unwrap(); // check_diff error
-            if let Err(e) = web_socket.event_loop(&keep_running).await {
-                error!("Error: {:?}", e);
-                return Err(anyhow!(e));
+            if let Err(e) = web_socket.connect(all_ticker).await {
+                error!("connect websocket error: {:?}", e);
+                close_tx.send(true).unwrap();
             }
-            web_socket.disconnect().await.unwrap();
+            if let Err(e) = web_socket.event_loop(&keep_running).await {
+                error!("websocket event loop error: {:?}", e);
+                close_tx.send(true).unwrap();
+            }
+            if let Err(e) = web_socket.disconnect().await {
+                error!("disconnect websocket error: {:?}", e);
+            }
             warn!("disconnected");
-
-            Ok(())
         });
 
         Ok(())
