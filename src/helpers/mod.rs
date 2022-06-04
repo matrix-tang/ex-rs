@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod coin_symbol;
 
 
 #[cfg(test)]
