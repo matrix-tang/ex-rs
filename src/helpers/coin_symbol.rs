@@ -30,7 +30,7 @@ impl CoinSymbolCache {
     }
 
     pub fn get_coin_symbols(&self, coin: String) -> anyhow::Result<Option<Vec<String>>> {
-        Ok(self.coin_symbols.get(&coin).map(|v| v.value().clone()))
+        Ok(self.coin_symbols.get(&coin).map_or(Option::from(vec![]), |v| Option::from(v.value().clone())))
     }
 
     pub fn set_symbols(&self, symbol: String, price_info: PriceInfo) -> anyhow::Result<()> {
@@ -39,7 +39,7 @@ impl CoinSymbolCache {
     }
 
     pub fn get_symbols(&self, symbol: String) -> anyhow::Result<Option<PriceInfo>> {
-        Ok(self.symbols.get(&symbol).map(|s| s.value().clone()))
+        Ok(self.symbols.get(&symbol).map_or(Option::from(PriceInfo::default()), |v| Option::from(v.value().clone())))
     }
 }
 
