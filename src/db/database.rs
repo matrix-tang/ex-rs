@@ -76,7 +76,7 @@ mod tests {
         println!("{:#?}", r);
 
         let sled_db = get_async_sled_db().unwrap();
-        sled_db.insert("name", "tang1");
+        let _ = sled_db.insert("name", "tang1");
         let name = sled_db.get("name");
         println!("{:#?}", name);
     }

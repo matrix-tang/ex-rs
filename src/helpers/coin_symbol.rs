@@ -1,5 +1,4 @@
-use anyhow::anyhow;
-use dashmap::{mapref::one::Ref, DashMap};
+use dashmap::DashMap;
 use crate::service::check_diff::PriceInfo;
 
 #[derive(Debug, Clone)]
@@ -17,7 +16,7 @@ impl CoinSymbolCache {
     }
 
     pub fn set_coin_symbols(&self, coin: String, symbol: String) -> anyhow::Result<()> {
-        let set_result = self.coin_symbols
+        self.coin_symbols
             .entry(coin)
             .and_modify(|symbols| {
                 symbols.push(symbol.clone());
