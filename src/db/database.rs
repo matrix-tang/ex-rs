@@ -5,10 +5,12 @@ use redis::Client;
 use sled::Db;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::MySqlPool;
+use crate::helpers::coin_symbol::CoinSymbolCache;
 
 static M_POOL: OnceCell<MySqlPool> = OnceCell::new();
 static R_REDIS: OnceCell<Client> = OnceCell::new();
 static SLED_DB: OnceCell<Db> = OnceCell::new();
+static COIN_SYMBOLS: OnceCell<CoinSymbolCache> = OnceCell::new();
 
 pub async fn init_db() -> anyhow::Result<()> {
     let c = Conf::get();
@@ -26,6 +28,8 @@ pub async fn init_db() -> anyhow::Result<()> {
     let sled_db = sled::open(&c.sled.path.as_str())?;
     SLED_DB.set(sled_db).unwrap();
 
+    COIN_SYMBOLS.set(CoinSymbolCache::new()).unwrap();
+
     Ok(())
 }
 
@@ -39,6 +43,10 @@ pub fn get_async_redis<'a>() -> Option<&'a Client> {
 
 pub fn get_async_sled_db<'a>() -> Option<&'a Db> {
     SLED_DB.get()
+}
+
+pub fn get_async_coin_symbols_cache<'a>() -> Option<&'a CoinSymbolCache> {
+    COIN_SYMBOLS.get()
 }
 
 pub async fn get_redis_connection() -> anyhow::Result<redis::aio::MultiplexedConnection> {

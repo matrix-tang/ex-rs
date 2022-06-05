@@ -8,11 +8,11 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use binance::api::*;
 use binance::general::General;
 use binance::websockets::*;
+use chrono::Local;
 use redis::{AsyncCommands, RedisResult};
 use tracing::{error, info, warn};
 use crate::{conf, db};
 use serde::{Deserialize, Serialize};
-use sled::IVec;
 
 const THREADS: i64 = 10;
 
@@ -39,23 +39,20 @@ impl CheckDiff {
             txs.insert(i, tx.clone());
 
             tokio::spawn(async move {
-                let mut redis = db::get_redis_connection().await.unwrap();
-                let sled_db = db::get_async_sled_db().unwrap();
+                let cache = db::get_async_coin_symbols_cache().unwrap();
                 loop {
                     select! {
                         event = rx.recv() => {
                             // println!("{:?}", event);
                             if let Some(WebsocketEvent::DayTicker(tick_event)) = event {
-                                if let Ok(symbol) = sled_db.get(&tick_event.symbol) {
-                                    if let Some(iv) = symbol {
-                                        if let Ok(t) = serde_json::from_slice(iv.as_ref()) {
-                                            let info: PriceInfo = t;
-                                            let key = format!("{}{}", conf::vars::EX_PREFIX, &info.base_asset);
-                                            let r: RedisResult<HashMap<String, String>> = redis.hgetall(key).await;
-                                            let _ = r.map(|x| {
-                                                // println!("xxxxxxxxx: {:?}", x.into_keys());
-                                                info!("{:?}, {:?}, {:?}", tick_event.symbol, info, x.into_keys());
-                                            });
+                                if let Ok(option_price_info) = cache.get_symbols(&tick_event.symbol) {
+                                    if let Some(price_info) = option_price_info {
+                                        let key = format!("{}{}", conf::vars::EX_PREFIX, &price_info.base_asset);
+                                        if let Ok(option_symbols) = cache.get_coin_symbols(&key) {
+                                            if let Some(symbols) = option_symbols {
+                                                // println!("-----xxxx------xxxxx: {:?}, {:?}", cache.symbols.len(), cache.coin_symbols.len());
+                                                info!("{:?}, {:?}, {:?}", tick_event.symbol, price_info, symbols);
+                                            }
                                         }
                                     }
                                 }
@@ -75,12 +72,15 @@ impl CheckDiff {
     pub async fn init_coin_symbols(&self) -> anyhow::Result<()> {
         let client: General = Binance::new(None, None);
         let mut redis = db::get_redis_connection().await?;
+        let cache = db::database::get_async_coin_symbols_cache().unwrap();
         if let Ok(exchange_info) = client.exchange_info().await {
             for symbol in exchange_info.symbols {
                 let key = format!("{}{}", conf::vars::EX_PREFIX, &symbol.base_asset);
                 let _: RedisResult<bool> = redis.hset(&key, &symbol.symbol, "1".to_string()).await;
+                let _ = cache.set_coin_symbols(key, symbol.symbol);
             }
         }
+        warn!("init coin symbols {:?}", Local::now().timestamp_millis());
 
         tokio::spawn(async move {
             loop {
@@ -89,13 +89,14 @@ impl CheckDiff {
                         if let Ok(exchange_info) = client.exchange_info().await {
                             for symbol in exchange_info.symbols {
                                 let key = format!("{}{}", conf::vars::EX_PREFIX, &symbol.base_asset);
-                                let result: RedisResult<bool> = redis.hget(&key, &symbol.symbol).await;
-                                if let Ok(ex) = result {
-                                    if ex {
-                                        continue;
+                                if let Ok(option_coin_symbols) = cache.get_coin_symbols(&key) {
+                                    if let Some(coin_symbols) = option_coin_symbols {
+                                        if coin_symbols.len() > 0 {
+                                            continue
+                                        }
                                     }
                                 }
-                                let _: RedisResult<bool> = redis.hset(&key, &symbol.symbol, "1".to_string()).await;
+                                let _ = cache.set_coin_symbols(&key, symbol.symbol);
                             }
                         }
                     }
@@ -109,43 +110,37 @@ impl CheckDiff {
     #[allow(dead_code)]
     pub async fn init_symbols(&self) -> anyhow::Result<()> {
         let client: General = Binance::new(None, None);
-        let sled_db = db::get_async_sled_db().unwrap();
+        let cache = db::database::get_async_coin_symbols_cache().unwrap();
         if let Ok(exchange_info) = client.exchange_info().await {
             for symbol in exchange_info.symbols {
-                let s = serde_json::to_string(&PriceInfo {
+                cache.set_symbols(&symbol.symbol, PriceInfo {
                     base_asset: symbol.base_asset,
                     quote_asset: symbol.quote_asset,
                     price: Decimal::ZERO,
                     updated: 0,
                 })?;
-                sled_db.insert(&symbol.symbol, IVec::from(s.as_str()))?;
             }
         }
+        warn!("init symbols {:?}", Local::now().timestamp_millis());
 
         tokio::spawn(async move {
             loop {
                 select! {
-                    _oks = tokio::time::sleep(tokio::time::Duration::from_secs(300)) => {
+                    _oks = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {
                         if let Ok(exchange_info) = client.exchange_info().await {
                             for symbol in exchange_info.symbols {
-                                if let Ok(_symbol) = sled_db.get(&symbol.symbol) {
+
+                                if let Ok(_info) = cache.get_symbols(&symbol.symbol) {
                                     continue;
                                 }
 
-                                match serde_json::to_string(&PriceInfo {
+                                if let Err(e) = cache.set_symbols(&symbol.symbol, PriceInfo {
                                     base_asset: symbol.base_asset,
                                     quote_asset: symbol.quote_asset,
                                     price: Decimal::ZERO,
                                     updated: 0,
                                 }) {
-                                    Ok(s) => {
-                                        if let Err(e) = sled_db.insert(symbol.symbol, IVec::from(s.as_str())) {
-                                            error!("insert symbols error: {:?}", e);
-                                        }
-                                    },
-                                    Err(e) => {
-                                        error!("serde json error: {:?}", e);
-                                    }
+                                    error!("insert symbols error: {:?}", e);
                                 }
                             }
                         }
@@ -164,7 +159,7 @@ impl CheckDiff {
             let keep_running = AtomicBool::new(true);
             let all_ticker = all_ticker_stream();
 
-            let sled = db::get_async_sled_db().unwrap();
+            let cache = db::get_async_coin_symbols_cache().unwrap();
 
             let mut web_socket: WebSockets<'_, Vec<WebsocketEvent>> = WebSockets::new(|events: Vec<WebsocketEvent>| {
                 for tick_events in events {
@@ -178,25 +173,15 @@ impl CheckDiff {
                             }
                         }
 
-                        if let Ok(symbol) = sled.get(&tick_event.symbol) {
-                            if let Some(iv) = symbol {
-                                if let Ok(t) = serde_json::from_slice(iv.as_ref()) {
-                                    let info: PriceInfo = t;
-                                    match serde_json::to_string(&PriceInfo {
-                                        base_asset: info.base_asset,
-                                        quote_asset: info.quote_asset,
-                                        price: Decimal::from_str(tick_event.current_close.as_str()).unwrap(),
-                                        updated: tick_event.event_time,
-                                    }) {
-                                        Ok(s) => {
-                                            if let Err(e) = sled.insert(tick_event.symbol, IVec::from(s.as_str())) {
-                                                error!("last price insert symbols error: {:?}", e);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("serde json error: {:?}", e);
-                                        }
-                                    }
+                        if let Ok(option_price_info) = cache.get_symbols(&tick_event.symbol) {
+                            if let Some(price_info) = option_price_info {
+                                if let Err(e) = cache.set_symbols(&tick_event.symbol, PriceInfo {
+                                    base_asset: price_info.base_asset,
+                                    quote_asset: price_info.quote_asset,
+                                    price: Decimal::from_str(tick_event.current_close.as_str()).unwrap_or_default(),
+                                    updated: tick_event.event_time,
+                                }) {
+                                    error!("last price insert symbols error: {:?}", e);
                                 }
                             }
                         }

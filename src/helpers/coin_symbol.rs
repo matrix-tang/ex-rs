@@ -3,8 +3,8 @@ use crate::service::check_diff::PriceInfo;
 
 #[derive(Debug, Clone)]
 pub struct CoinSymbolCache {
-    coin_symbols: DashMap<String, Vec<String>>,
-    symbols: DashMap<String, PriceInfo>,
+    pub coin_symbols: DashMap<String, Vec<String>>,
+    pub symbols: DashMap<String, PriceInfo>,
 }
 
 impl CoinSymbolCache {
@@ -15,9 +15,12 @@ impl CoinSymbolCache {
         }
     }
 
-    pub fn set_coin_symbols(&self, coin: String, symbol: String) -> anyhow::Result<()> {
+    pub fn set_coin_symbols<C>(&self, coin: C, symbol: String) -> anyhow::Result<()>
+        where
+            C: Into<String>
+    {
         self.coin_symbols
-            .entry(coin)
+            .entry(coin.into())
             .and_modify(|symbols| {
                 symbols.push(symbol.clone());
             })
@@ -29,17 +32,26 @@ impl CoinSymbolCache {
         Ok(())
     }
 
-    pub fn get_coin_symbols(&self, coin: String) -> anyhow::Result<Option<Vec<String>>> {
-        Ok(self.coin_symbols.get(&coin).map_or(Option::from(vec![]), |v| Option::from(v.value().clone())))
+    pub fn get_coin_symbols<C>(&self, coin: C) -> anyhow::Result<Option<Vec<String>>>
+        where
+            C: Into<String>
+    {
+        Ok(self.coin_symbols.get(&coin.into()).map_or(Option::from(vec![]), |v| Option::from(v.value().clone())))
     }
 
-    pub fn set_symbols(&self, symbol: String, price_info: PriceInfo) -> anyhow::Result<()> {
-        self.symbols.insert(symbol, price_info);
+    pub fn set_symbols<S>(&self, symbol: S, price_info: PriceInfo) -> anyhow::Result<()>
+        where
+            S: Into<String>
+    {
+        self.symbols.insert(symbol.into(), price_info);
         Ok(())
     }
 
-    pub fn get_symbols(&self, symbol: String) -> anyhow::Result<Option<PriceInfo>> {
-        Ok(self.symbols.get(&symbol).map_or(Option::from(PriceInfo::default()), |v| Option::from(v.value().clone())))
+    pub fn get_symbols<S>(&self, symbol: S) -> anyhow::Result<Option<PriceInfo>>
+        where
+            S: Into<String>
+    {
+        Ok(self.symbols.get(&symbol.into()).map_or(Option::from(PriceInfo::default()), |v| Option::from(v.value().clone())))
     }
 }
 
