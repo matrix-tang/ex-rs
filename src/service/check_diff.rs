@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
-use binance::ws_model::WebsocketEvent;
+use binance::ws_model::{WebsocketEvent, WebsocketEventUntag};
 use rust_decimal::Decimal;
 use tokio::select;
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -10,21 +10,12 @@ use binance::general::General;
 use binance::websockets::*;
 use chrono::Local;
 use redis::{AsyncCommands, RedisResult};
+use rust_decimal::prelude::FromPrimitive;
 use tracing::{error, info, warn};
 use crate::{conf, db};
-use serde::{Deserialize, Serialize};
+use crate::helpers::coin_symbol::{PriceInfo, BookTicker};
 
 const THREADS: i64 = 10;
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct PriceInfo {
-    pub base_asset: String,
-    pub quote_asset: String,
-    pub price: Decimal,
-    pub updated: u64,
-}
-
-// pub type Symbols = Arc<Mutex<DashMap<String, PriceInfo>>>;
 
 #[derive(Debug, Clone)]
 pub struct CheckDiff {
@@ -205,6 +196,38 @@ impl CheckDiff {
             warn!("disconnected");
         });
 
+        Ok(())
+    }
+
+    pub async fn book_ticker(&self, close_tx: UnboundedSender<bool>) -> anyhow::Result<()> {
+        tokio::spawn(async move {
+            let keep_running = AtomicBool::new(true);
+            let all_book_ticker = all_book_ticker_stream();
+            let cache = db::get_async_coin_symbols_cache().unwrap();
+            let mut web_socket: WebSockets<'_, WebsocketEventUntag> = WebSockets::new(|events: WebsocketEventUntag| {
+                if let WebsocketEventUntag::BookTicker(tick_event) = events {
+                    let _ = cache.set_book_ticker(&tick_event.symbol, BookTicker {
+                        update_id: tick_event.update_id,
+                        symbol: tick_event.symbol.clone(),
+                        best_bid: Decimal::from_f64(tick_event.best_bid).unwrap_or_default(),
+                        best_bid_qty: Decimal::from_f64(tick_event.best_bid_qty).unwrap_or_default(),
+                        best_ask: Decimal::from_f64(tick_event.best_ask).unwrap_or_default(),
+                        best_ask_qty: Decimal::from_f64(tick_event.best_ask_qty).unwrap_or_default(),
+                    });
+                    let r = cache.get_book_ticker(&tick_event.symbol).unwrap();
+                    println!("{:?}, {:?}", r, cache.book_tickers.len());
+                }
+                Ok(())
+            });
+
+            web_socket.connect(&all_book_ticker).await.unwrap(); // check error
+            if let Err(e) = web_socket.event_loop(&keep_running).await {
+                error!("book_ticker connect Error: {:?}", e);
+                close_tx.send(true).unwrap();
+            }
+            web_socket.disconnect().await.unwrap();
+            warn!("disconnected");
+        });
         Ok(())
     }
 }

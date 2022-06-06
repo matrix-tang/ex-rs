@@ -27,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
     c.init_coin_symbols().await?;
     c.init_symbols().await?;
     c.last_price(close_tx.clone()).await?;
+    c.book_ticker(close_tx.clone()).await?;
 
     select! {
         _ = wait_loop => {
