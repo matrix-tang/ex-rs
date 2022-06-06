@@ -214,8 +214,8 @@ impl CheckDiff {
                         best_ask: Decimal::from_f64(tick_event.best_ask).unwrap_or_default(),
                         best_ask_qty: Decimal::from_f64(tick_event.best_ask_qty).unwrap_or_default(),
                     });
-                    let r = cache.get_book_ticker(&tick_event.symbol).unwrap();
-                    println!("{:?}, {:?}", r, cache.book_tickers.len());
+                    /*let r = cache.get_book_ticker(&tick_event.symbol).unwrap();
+                    println!("{:?}, {:?}", r, cache.book_tickers.len());*/
                 }
                 Ok(())
             });
