@@ -4,9 +4,19 @@ use ex_rs::db;
 use ex_rs::service::check_diff;
 use time::{macros::format_description, UtcOffset};
 use tracing_subscriber::{fmt::time::OffsetTime, EnvFilter};
+use ex_rs::conf::config::Conf;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let conf = Conf::get();
+    let log_path = env!("CARGO_MANIFEST_DIR").to_string() + &conf.log.path;
+    let log_name = &conf.log.name;
+
+    // let file_appender = tracing_appender::rolling::hourly(log_path, log_name);
+    // 日志输出到文件
+    let file_appender = tracing_appender::rolling::never(log_path, log_name);
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
     // 设置日志日期格式
     let local_time = OffsetTime::new(
         UtcOffset::from_hms(8, 0, 0).unwrap(),
@@ -14,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     tracing_subscriber::fmt()
+        .with_writer(non_blocking)
         // all spans/events with a level higher than TRACE (e.g, info, warn, etc.)
         // will be written to stdout.
         .with_env_filter(EnvFilter::from_default_env())

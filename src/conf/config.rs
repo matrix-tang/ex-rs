@@ -11,6 +11,12 @@ pub struct SledConfig {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LogConfig {
+    pub path: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct IpConfig {
     pub name: String,
     pub ip: String,
@@ -38,6 +44,7 @@ pub struct Conf {
     pub redis: RedisConfig,
     pub mysql: MysqlConfig,
     pub sled: SledConfig,
+    pub log: LogConfig,
     pub ip_config: Vec<IpConfig>,
     pub binance_api_config: BinanceApiConfig,
 }
